@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.responses import Response
 from pydantic import BaseModel, EmailStr
 
 from quiz_solver import solve_quiz as solve_quiz_func
@@ -131,6 +132,12 @@ async def solve_quiz(request: QuizRequest):
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy"}
+
+
+@app.head("/health")
+async def health_check_head():
+    """HEAD variant for uptime monitors"""
+    return Response(status_code=status.HTTP_200_OK)
 
 
 if __name__ == "__main__":
