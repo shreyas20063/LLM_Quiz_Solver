@@ -7,10 +7,12 @@ A FastAPI-based application for handling LLM quiz solving requests.
 - POST endpoint at `/` to receive quiz solving requests
 - Secret-based authentication
 - Request validation using Pydantic
+- Background quiz solving with a quick 200 acknowledgement
 - Environment variable configuration
 - Health check endpoint at `/health`
 - **Headless browser extraction** with Selenium Chrome WebDriver
 - **Automatic base64 decoding** from JavaScript-rendered pages
+- **Optional LLM fallback/retry** via AI Pipe (set `AIPIPE_API_TOKEN`)
 - Comprehensive logging for debugging
 
 ## Setup Instructions
@@ -41,6 +43,7 @@ cp .env.example .env
 # Edit .env and add your actual credentials
 # STUDENT_EMAIL=your@email.com
 # STUDENT_SECRET=your_secret_here
+# AIPIPE_API_TOKEN=your_aipipe_token   # Optional: enables LLM fallback/retry
 ```
 
 ### 4. Run the Application
@@ -76,7 +79,7 @@ curl -X POST http://localhost:8000/ \
   }'
 
 # Expected response (200 OK):
-# {"status": "received", "url": "https://example.com/quiz"}
+# {"status": "received", "url": "https://example.com/quiz", "message": "Quiz solving started in background"}
 ```
 
 ```bash
@@ -103,6 +106,7 @@ curl -X POST http://localhost:8000/ \
   }'
 
 # Expected response (400 Bad Request with validation error)
+# (Malformed JSON bodies return 400; well-formed but invalid/missing fields return 422)
 ```
 
 ### Using Python requests
@@ -138,6 +142,8 @@ http POST http://localhost:8000/ \
 ### POST /
 
 Accepts quiz solving requests.
+Returns immediately with a 200 ack when the secret matches, while the solver runs in the background (3-minute hard limit). The solver visits the provided quiz URL, follows any next URLs returned by the quiz submit endpoint, and posts answers directly to the submit URLs specified on the quiz pages.
+If `AIPIPE_API_TOKEN` is set, an LLM fallback/retry is used when a deterministic answer is unknown or marked incorrect.
 
 **Request Body:**
 ```json
@@ -150,21 +156,22 @@ Accepts quiz solving requests.
 
 **Responses:**
 
-- `200 OK`: Request received successfully
+- `200 OK`: Request received successfully (solver continues in background)
   ```json
   {
     "status": "received",
     "url": "https://quiz-url.com",
-    "extracted_content": {
-      "page_text": "Full text content from the page...",
-      "decoded_text": "Decoded base64 content if found...",
-      "has_decoded_content": true,
-      "error": null
-    }
+    "message": "Quiz solving started in background",
+    "quiz_results": null
   }
   ```
 
-- `400 Bad Request`: Invalid or malformed request
+- `400 Bad Request`: Malformed JSON
+  ```json
+  { "detail": [ ... ] }
+  ```
+
+- `422 Unprocessable Entity`: Well-formed JSON but validation errors (e.g., missing url or bad email)
   ```json
   {
     "detail": [

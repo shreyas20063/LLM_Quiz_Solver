@@ -1,9 +1,14 @@
-from fastapi import FastAPI, HTTPException, status, BackgroundTasks
-from pydantic import BaseModel, EmailStr
-from dotenv import load_dotenv
-import os
+import asyncio
 import logging
-from browser_handler import extract_task_from_url
+import os
+from typing import Optional
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, EmailStr
+
 from quiz_solver import solve_quiz as solve_quiz_func
 
 # Load environment variables from .env file
@@ -19,6 +24,23 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="LLM Quiz Solver")
 
 
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """
+    Return HTTP 400 for malformed JSON bodies while preserving 422 for
+    normal validation errors (e.g., missing fields, bad email).
+    """
+    errors = exc.errors()
+    json_error = any(
+        err.get("type", "").endswith("jsondecode")
+        or err.get("type") == "json_invalid"
+        or "JSON decode" in err.get("msg", "")
+        for err in errors
+    )
+    status_code = status.HTTP_400_BAD_REQUEST if json_error else status.HTTP_422_UNPROCESSABLE_ENTITY
+    return JSONResponse(status_code=status_code, content={"detail": errors})
+
+
 class QuizRequest(BaseModel):
     email: EmailStr
     secret: str
@@ -32,8 +54,9 @@ class ErrorResponse(BaseModel):
 class SuccessResponse(BaseModel):
     status: str
     url: str
-    extracted_content: dict = None
-    quiz_results: dict = None
+    message: Optional[str] = None
+    extracted_content: Optional[dict] = None
+    quiz_results: Optional[dict] = None
 
 
 @app.post("/", response_model=SuccessResponse, responses={
@@ -65,30 +88,28 @@ async def solve_quiz(request: QuizRequest):
     logger.info(f"Starting quiz solver for URL: {request.url}")
 
     try:
-        # Solve the quiz (with 3 minute timeout)
-        quiz_results = await solve_quiz_func(
-            initial_url=request.url,
-            email=request.email,
-            secret=request.secret,
-            timeout_seconds=180
-        )
+        async def _run_solver() -> None:
+            """Fire-and-forget task that solves the quiz within the time limit."""
+            try:
+                await solve_quiz_func(
+                    initial_url=request.url,
+                    email=request.email,
+                    secret=request.secret,
+                    timeout_seconds=180
+                )
+                logger.info("Background quiz solver finished")
+            except Exception as exc:
+                logger.error(f"Background quiz solver failed: {exc}", exc_info=True)
 
-        logger.info(f"Quiz solver completed")
-        logger.info(f"Total questions: {quiz_results.get('total_questions', 0)}")
-        logger.info(f"Correct answers: {quiz_results.get('correct_answers', 0)}")
+        # Start solver in the background so we can acknowledge immediately
+        asyncio.create_task(_run_solver())
 
-        # Return results
+        # Return immediate acknowledgement (spec requires 200 when secret matches)
         return {
-            "status": "completed",
+            "status": "received",
             "url": request.url,
-            "quiz_results": {
-                "total_questions": quiz_results.get("total_questions", 0),
-                "correct_answers": quiz_results.get("correct_answers", 0),
-                "total_time": quiz_results.get("total_time", 0),
-                "questions": quiz_results.get("questions", []),
-                "errors": quiz_results.get("errors", []),
-                "success": quiz_results.get("correct_answers", 0) > 0
-            }
+            "message": "Quiz solving started in background",
+            "quiz_results": None
         }
 
     except Exception as e:

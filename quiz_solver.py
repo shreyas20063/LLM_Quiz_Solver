@@ -653,13 +653,13 @@ async def solve_quiz(
 
     try:
         while questions_solved < max_questions:
-            # Check timeout
+            # Hard timeout: stop once we cross the limit
             elapsed = time.time() - start_time
             remaining = timeout_seconds - elapsed
 
-            if remaining < 30:
-                logger.warning(f"Approaching timeout ({remaining:.1f}s remaining), stopping")
-                results["errors"].append("Timeout approaching")
+            if remaining <= 0:
+                logger.warning(f"Timeout reached ({elapsed:.1f}s), stopping")
+                results["errors"].append("Timeout reached")
                 break
 
             logger.info("")
@@ -990,8 +990,8 @@ async def solve_quiz(
                 final_correct = submission_result.get("correct", False)
                 final_answer = answer
 
-                # If incorrect, attempt a single LLM retry (if not already used)
-                if not final_correct and parsed_task.get("question_text") and not question_result.get("llm_used"):
+                # If incorrect, attempt a single LLM retry (always allowed when incorrect)
+                if not final_correct and parsed_task.get("question_text"):
                     api_token = os.getenv("AIPIPE_API_TOKEN")
                     if api_token:
                         logger.info("Initial answer incorrect - attempting LLM retry submission")
