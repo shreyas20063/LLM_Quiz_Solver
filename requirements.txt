@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+pydantic
+pydantic[email]
+requests
+selenium
+webdriver-manager
+httpx
+pdfplumber
+pandas
+openpyxl
+beautifulsoup4
+lxml
+html5lib
+numpy
