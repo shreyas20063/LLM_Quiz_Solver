@@ -5,6 +5,7 @@ Uses Selenium with headless Chrome to navigate and extract content.
 import logging
 import base64
 import re
+import os
 from typing import Dict, Optional
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -97,6 +98,9 @@ async def extract_task_from_url(url: str) -> Dict[str, Optional[str]]:
 
         # Configure Chrome options for headless mode
         chrome_options = Options()
+        chrome_binary = os.getenv("CHROME_BINARY")
+        if chrome_binary:
+            chrome_options.binary_location = chrome_binary
         chrome_options.add_argument("--headless")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
@@ -110,8 +114,12 @@ async def extract_task_from_url(url: str) -> Dict[str, Optional[str]]:
 
         logger.info("Initializing Chrome WebDriver...")
 
-        # Initialize the driver with webdriver-manager
-        service = Service(ChromeDriverManager().install())
+        # Initialize the driver (env override for driver path if provided)
+        driver_path = os.getenv("CHROMEDRIVER_PATH")
+        if driver_path:
+            service = Service(driver_path)
+        else:
+            service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=chrome_options)
 
         logger.info(f"Navigating to URL: {url}")
