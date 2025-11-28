@@ -9,7 +9,6 @@ RUN apt-get update && \
         chromium-driver \
         fonts-liberation \
         libnss3 \
-        libgconf-2-4 \
         libxss1 \
         libasound2 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
