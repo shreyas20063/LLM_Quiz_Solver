@@ -10,9 +10,10 @@ import hashlib
 from typing import Any, Dict, Optional
 import httpx
 from browser_handler import extract_task_from_url
-from data_extractor import download_file, extract_pdf_tables, extract_web_table
+from data_extractor import download_file, extract_pdf_tables, extract_web_table, read_csv_with_header_detection
 from data_analyzer import solve_task, detect_task_type, format_answer, get_dataframe_summary
 from llm_helper import analyze_with_llm, should_use_llm, format_data_summary
+from media_support import transcribe_media
 
 # Configure logging
 logging.basicConfig(
@@ -197,6 +198,7 @@ def parse_task(task_text: str, quiz_url: str = None, email: str = None) -> Dict[
         "submit_url": None,
         "file_urls": [],
         "data_urls": [],
+        "video_urls": [],
         "all_urls": [],
         "raw_text": task_text
     }
@@ -341,10 +343,18 @@ def parse_task(task_text: str, quiz_url: str = None, email: str = None) -> Dict[
         elif not url.startswith('http') and base_domain:
             url = base_domain + '/' + url
 
+        # Classify video links
+        video_exts = ('.mp4', '.mov', '.webm', '.mkv', '.avi')
+        is_video = url.lower().endswith(video_exts) or "youtube.com" in url.lower() or "youtu.be" in url.lower()
+
         # Add to data URLs if not already in file URLs and not a duplicate
         if url not in parsed["file_urls"] and url not in parsed["data_urls"]:
-            parsed["data_urls"].append(url)
-            logger.info(f"Found data URL (href): {url}")
+            if is_video:
+                parsed["video_urls"].append(url)
+                logger.info(f"Found video URL (href): {url}")
+            else:
+                parsed["data_urls"].append(url)
+                logger.info(f"Found data URL (href): {url}")
 
     # Replace $EMAIL in all URLs
     if email:
@@ -384,6 +394,7 @@ def parse_task(task_text: str, quiz_url: str = None, email: str = None) -> Dict[
     logger.info(f"  - Data URLs: {len(parsed['data_urls'])}")
     logger.info(f"  - All URLs: {len(parsed['all_urls'])}")
     logger.info(f"  - Submit URL: {'Found' if parsed['submit_url'] else 'Not found'}")
+    logger.info(f"  - Video URLs: {len(parsed['video_urls'])}")
 
     return parsed
 
@@ -640,7 +651,6 @@ async def solve_quiz(
     start_time = time.time()
     current_url = initial_url
     questions_solved = 0
-    max_questions = 10  # Safety limit
     results = {
         "start_time": start_time,
         "initial_url": initial_url,
@@ -652,7 +662,7 @@ async def solve_quiz(
     }
 
     try:
-        while questions_solved < max_questions:
+        while True:
             # Hard timeout: stop once we cross the limit
             elapsed = time.time() - start_time
             remaining = timeout_seconds - elapsed
@@ -710,6 +720,7 @@ async def solve_quiz(
             logger.info(f"Submit URL: {parsed_task.get('submit_url')}")
             logger.info(f"File URLs: {len(parsed_task.get('file_urls', []))}")
             logger.info(f"Data URLs: {len(parsed_task.get('data_urls', []))}")
+            logger.info(f"Video URLs: {len(parsed_task.get('video_urls', []))}")
 
             # Prepare variables
             answer = None
@@ -725,6 +736,16 @@ async def solve_quiz(
                 question_result["used_special_handler"] = True
                 for key, value in special_result.get("metadata", {}).items():
                     question_result[key] = value
+
+            # Step 2.6: Optional media transcription for video links
+            if answer is None and parsed_task.get("video_urls"):
+                for vid_url in parsed_task["video_urls"]:
+                    transcript = await transcribe_media(vid_url)
+                    if transcript:
+                        logger.info("Using media transcript to augment task text")
+                        task_text = f"{task_text}\n\n[Media Transcript]\n{transcript}"
+                        question_result["video_transcript"] = transcript[:500]
+                        break
 
             # Step 3: Download and extract data
             logger.info("Step 3: Downloading and extracting data")
@@ -790,7 +811,7 @@ async def solve_quiz(
                             import pandas as pd
                             from io import BytesIO
                             if url.lower().endswith('.csv'):
-                                df = pd.read_csv(BytesIO(file_bytes))
+                                df = read_csv_with_header_detection(file_bytes)
                             else:
                                 df = pd.read_excel(BytesIO(file_bytes))
                         elif url.lower().endswith('.txt'):

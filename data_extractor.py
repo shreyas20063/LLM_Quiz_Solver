@@ -10,6 +10,7 @@ import pandas as pd
 import pdfplumber
 from io import BytesIO
 from bs4 import BeautifulSoup
+import numpy as np
 
 # Configure logging
 logging.basicConfig(
@@ -327,3 +328,52 @@ def extract_web_table_sync(url: str) -> pd.DataFrame:
 def call_api_sync(url: str, method: str = "GET", data: Optional[Dict] = None) -> Dict:
     """Synchronous wrapper for call_api"""
     return asyncio.run(call_api(url, method, data))
+
+
+def _is_numeric_string(value: str) -> bool:
+    """Return True if the string can be parsed as a number."""
+    try:
+        float(str(value).strip())
+        return True
+    except Exception:
+        return False
+
+
+def read_csv_with_header_detection(csv_bytes: bytes, max_rows: Optional[int] = None) -> pd.DataFrame:
+    """
+    Load a CSV with simple header detection and optional row cap for very large files.
+
+    - If column names look numeric-only, treat first row as data (header=None).
+    - If the file is very large, limit rows to avoid memory blowups.
+    """
+    try:
+        sample_df = pd.read_csv(BytesIO(csv_bytes), nrows=5, header=0, low_memory=False)
+        col_names = sample_df.columns.tolist()
+        header_is_data = all(_is_numeric_string(name) for name in col_names)
+    except Exception:
+        # Fall back to assuming there is a header
+        header_is_data = False
+
+    header = None if header_is_data else 0
+
+    # Cap rows for extremely large files to avoid memory issues
+    row_limit = max_rows
+    if row_limit is None:
+        # If file is >20MB, sample up to 100k rows
+        if len(csv_bytes) > 20_000_000:
+            row_limit = 100_000
+            logger.info("Large CSV detected (>20MB); sampling first 100000 rows")
+
+    try:
+        df = pd.read_csv(BytesIO(csv_bytes), header=header, nrows=row_limit, low_memory=False)
+        return df
+    except MemoryError:
+        logger.warning("MemoryError reading CSV; sampling first 20000 rows")
+        return pd.read_csv(BytesIO(csv_bytes), header=header, nrows=20000, low_memory=False)
+    except Exception as exc:
+        logger.warning(f"CSV read failed with header={header}: {exc}")
+        # Last resort: try without header and small sample
+        try:
+            return pd.read_csv(BytesIO(csv_bytes), header=None, nrows=20000, low_memory=False)
+        except Exception:
+            return pd.DataFrame()

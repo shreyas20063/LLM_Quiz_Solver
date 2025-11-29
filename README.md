@@ -459,22 +459,16 @@ curl -X POST http://localhost:8000/ \
 Response:
 ```json
 {
-  "status": "completed",
+  "status": "received",
   "url": "https://quiz-url.com",
-  "quiz_results": {
-    "total_questions": 3,
-    "correct_answers": 2,
-    "total_time": 45.2,
-    "questions": [...],
-    "errors": [],
-    "success": true
-  }
+  "message": "Quiz solving started in background",
+  "quiz_results": null
 }
 ```
 
 ### Features
 
-- **Timeout handling**: Stops gracefully before timeout (default: 180s)
+- **Timeout handling**: Hard stop at 180s (default)
 - **Multi-question support**: Follows URL chains automatically
 - **Comprehensive logging**: Detailed logs at each step
 - **Error resilience**: Continues on errors when possible
